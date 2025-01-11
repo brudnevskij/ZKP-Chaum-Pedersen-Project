@@ -2,7 +2,12 @@ pub mod zkp_auth {
     include!("./zkp_auth.rs");
 }
 
+use std::collections::HashMap;
+use std::hash::Hash;
+use std::sync::Mutex;
+use num_bigint::{BigInt, BigUint};
 use tonic::{transport::Server, Request, Response, Status};
+use tonic::codegen::ok;
 use zkp_auth::{
     auth_server::{Auth, AuthServer},
     AuthenticationAnswerRequest, AuthenticationAnswerResponse, AuthenticationChallengeRequest,
@@ -10,7 +15,25 @@ use zkp_auth::{
 };
 
 #[derive(Debug, Default)]
-struct AuthImpl {}
+pub struct AuthImpl {
+    pub user_info: Mutex<HashMap<String,UserInfo>>
+}
+
+#[derive(Debug, Default)]
+pub struct UserInfo {
+    // registration
+    pub user_name: String,
+    pub y1: BigUint,
+    pub y2: BigUint,
+    // auth
+    pub r1: BigUint,
+    pub r2: BigUint,
+    // verification
+    pub c: BigUint,
+    pub s: BigUint,
+    pub session_id: String,
+}
+
 
 #[tonic::async_trait]
 impl Auth for AuthImpl {
@@ -18,7 +41,22 @@ impl Auth for AuthImpl {
         &self,
         request: Request<RegisterRequest>,
     ) -> Result<Response<RegisterResponse>, Status> {
-        todo!()
+        let request = request.into_inner();
+        print!("Request: {:?}", request);
+        let user_name = request.user;
+        let y1 = BigUint::from_bytes_be(&request.y1);
+        let y2 = BigUint::from_bytes_be(&request.y2);
+
+        let mut user_info = UserInfo::default();
+        user_info.user_name = user_name.clone();
+        user_info.y1 = y1;
+        user_info.y2 = y2;
+
+        let mut user_info_storage = &mut self.user_info.lock().unwrap();
+        user_info_storage.insert(user_name, user_info);
+
+
+        Ok(Response::new(RegisterResponse {}))
     }
     async fn create_authentication_challenge(
         &self,
