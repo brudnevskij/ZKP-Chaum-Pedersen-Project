@@ -6,7 +6,6 @@ use num_bigint::{BigInt, BigUint};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Mutex;
-use tonic::codegen::ok;
 use tonic::{transport::Server, Code, Request, Response, Status};
 use zkp_auth::{
     auth_server::{Auth, AuthServer},
@@ -43,7 +42,7 @@ impl Auth for AuthImpl {
         request: Request<RegisterRequest>,
     ) -> Result<Response<RegisterResponse>, Status> {
         let request = request.into_inner();
-        print!("Request: {:?}", request);
+        println!("Request: {:?}", request);
         let user_name = request.user;
         let y1 = BigUint::from_bytes_be(&request.y1);
         let y2 = BigUint::from_bytes_be(&request.y2);
@@ -68,13 +67,12 @@ impl Auth for AuthImpl {
         let mut user_info_storage = &mut self.user_info.lock().unwrap();
 
         if let Some(user_info) = user_info_storage.get_mut(&user_name) {
-            user_info.r1 = BigUint::from_bytes_be(&request.r1);
-            user_info.r2 = BigUint::from_bytes_be(&request.r2);
-
             let (_, _, _, q) = ZKP::get_constants();
             let c = ZKP::generate_random_below(&q);
             let auth_id = ZKP::generate_random_string(12);
 
+            user_info.r1 = BigUint::from_bytes_be(&request.r1);
+            user_info.r2 = BigUint::from_bytes_be(&request.r2);
             user_info.c = c.clone();
 
             let auth_id_storage = &mut self.auth_id_to_user.lock().unwrap();
@@ -100,7 +98,7 @@ impl Auth for AuthImpl {
 
         if let Some(user_name) = auth_info_storage.get_mut(&auth_id) {
             let mut user_info_storage = &mut self.user_info.lock().unwrap();
-            let user = user_info_storage.get_mut(&user_name).unwrap();
+            let user = user_info_storage.get_mut(user_name).unwrap();
 
             let s = request.s;
             let (alpha, beta, p, q) = ZKP::get_constants();
@@ -110,8 +108,8 @@ impl Auth for AuthImpl {
                 &user.r2,
                 &user.y1,
                 &user.y2,
-                &user.c,
                 &BigUint::from_bytes_be(&s),
+                &user.c,
             );
             if verification {
                 let session_id = ZKP::generate_random_string(12);
