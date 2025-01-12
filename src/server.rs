@@ -2,12 +2,12 @@ pub mod zkp_auth {
     include!("./zkp_auth.rs");
 }
 
+use num_bigint::{BigInt, BigUint};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Mutex;
-use num_bigint::{BigInt, BigUint};
-use tonic::{transport::Server, Code, Request, Response, Status};
 use tonic::codegen::ok;
+use tonic::{transport::Server, Code, Request, Response, Status};
 use zkp_auth::{
     auth_server::{Auth, AuthServer},
     AuthenticationAnswerRequest, AuthenticationAnswerResponse, AuthenticationChallengeRequest,
@@ -17,8 +17,8 @@ use zkp_auth_project::ZKP;
 
 #[derive(Debug, Default)]
 pub struct AuthImpl {
-    pub user_info: Mutex<HashMap<String,UserInfo>>,
-    pub auth_id_to_user: Mutex<HashMap<String,String>>
+    pub user_info: Mutex<HashMap<String, UserInfo>>,
+    pub auth_id_to_user: Mutex<HashMap<String, String>>,
 }
 
 #[derive(Debug, Default)]
@@ -35,7 +35,6 @@ pub struct UserInfo {
     pub s: BigUint,
     pub session_id: String,
 }
-
 
 #[tonic::async_trait]
 impl Auth for AuthImpl {
@@ -57,7 +56,6 @@ impl Auth for AuthImpl {
         let mut user_info_storage = &mut self.user_info.lock().unwrap();
         user_info_storage.insert(user_name, user_info);
 
-
         Ok(Response::new(RegisterResponse {}))
     }
     async fn create_authentication_challenge(
@@ -73,14 +71,19 @@ impl Auth for AuthImpl {
             user_info.r1 = BigUint::from_bytes_be(&request.r1);
             user_info.r2 = BigUint::from_bytes_be(&request.r2);
 
-            let (_,_,_,q) = ZKP::get_constants();
-            let c  = ZKP::generate_random_below(&q);
-            let auth_id = "skdjfsk".to_string();
+            let (_, _, _, q) = ZKP::get_constants();
+            let c = ZKP::generate_random_below(&q);
+            let auth_id = ZKP::generate_random_string(12);
+
+            user_info.c = c.clone();
 
             let auth_id_storage = &mut self.auth_id_to_user.lock().unwrap();
             auth_id_storage.insert(auth_id.clone(), user_info.user_name.clone());
 
-            Ok(Response::new(AuthenticationChallengeResponse{auth_id, c: c.to_bytes_be()}))
+            Ok(Response::new(AuthenticationChallengeResponse {
+                auth_id,
+                c: c.to_bytes_be(),
+            }))
         } else {
             Err(Status::new(Code::NotFound, "User not found".to_string()))
         }
@@ -89,7 +92,36 @@ impl Auth for AuthImpl {
         &self,
         request: Request<AuthenticationAnswerRequest>,
     ) -> Result<Response<AuthenticationAnswerResponse>, Status> {
-        todo!()
+        println!("Request: {:?}", request);
+        let request = request.into_inner();
+
+        let auth_id = request.auth_id;
+        let mut auth_info_storage = &mut self.auth_id_to_user.lock().unwrap();
+
+        if let Some(user_name) = auth_info_storage.get_mut(&auth_id) {
+            let mut user_info_storage = &mut self.user_info.lock().unwrap();
+            let user = user_info_storage.get_mut(&user_name).unwrap();
+
+            let s = request.s;
+            let (alpha, beta, p, q) = ZKP::get_constants();
+            let zkp = ZKP { p, q, alpha, beta };
+            let verification = zkp.verify(
+                &user.r1,
+                &user.r2,
+                &user.y1,
+                &user.y2,
+                &user.c,
+                &BigUint::from_bytes_be(&s),
+            );
+            if verification {
+                let session_id = ZKP::generate_random_string(12);
+                Ok(Response::new(AuthenticationAnswerResponse { session_id }))
+            } else {
+                Err(Status::new(Code::NotFound, "Bad solution".to_string()))
+            }
+        } else {
+            Err(Status::new(Code::NotFound, "Auth_id not found".to_string()))
+        }
     }
 }
 
